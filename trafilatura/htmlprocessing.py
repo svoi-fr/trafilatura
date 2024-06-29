@@ -6,6 +6,7 @@ Functions to process nodes in HTML code.
 import logging
 
 from copy import deepcopy
+import re
 
 from courlan.urlutils import fix_relative_urls, get_base_url
 from lxml.etree import Element, strip_tags, tostring
@@ -37,6 +38,8 @@ HTML_TAG_MAPPING = {v: k for k, v in REND_TAG_MAPPING.items()}
 
 PRESERVE_IMG_CLEANING = {'figure', 'picture', 'source'}
 
+MANUALLY_CLEANED_CHECK_CONTENT = ['aside', 'footer']
+
 
 def delete_element(element):
     "Remove the element from the LXML tree."
@@ -44,6 +47,19 @@ def delete_element(element):
         element.drop_tree()  # faster when applicable
     except AttributeError:  # pragma: no cover
         element.getparent().remove(element)
+
+def check_preserve(element, patterns):
+    """Check if the element or its descendants should be preserved based on patterns."""
+    for text in element.itertext():
+        if any(re.search(pattern, text) for pattern in patterns):
+            return True
+    return False
+
+def mark_preserve(element):
+    """Mark the element and its ancestors for preservation."""
+    while element is not None and 'preserve-content' not in element.attrib:
+        element.set('preserve-content', 'true')
+        element = element.getparent()
 
 
 def tree_cleaning(tree, options):
@@ -62,6 +78,10 @@ def tree_cleaning(tree, options):
         cleaning_list = [e for e in cleaning_list if e
                          not in PRESERVE_IMG_CLEANING]
         stripping_list.remove('img')
+    
+    if options.preserve:
+        cleaning_list = [e for e in cleaning_list if e
+                         not in MANUALLY_CLEANED_CHECK_CONTENT]
 
     # strip targeted elements
     strip_tags(tree, stripping_list)
@@ -79,6 +99,24 @@ def tree_cleaning(tree, options):
         for expression in cleaning_list:
             for element in tree.getiterator(expression):
                 delete_element(element)
+    
+    if options.preserve:
+        # Collect and mark elements to preserve
+        for element in tree.iter():
+            if check_preserve(element, options.preserve):
+                mark_preserve(element)
+        
+        # Remove non-preserved children of elements in MANUALLY_CLEANED_CHECK_CONTENT
+        for expression in MANUALLY_CLEANED_CHECK_CONTENT:
+            for element in tree.iter(expression):
+                if 'preserve-content' not in element.attrib:
+                    delete_element(element)
+                else:
+                    element.tag = 'div'
+                    children = list(element)
+                    for child in children:
+                        if 'preserve-content' not in child.attrib:
+                            delete_element(child)
 
     return prune_html(tree)
 
@@ -109,7 +147,8 @@ def prune_unwanted_nodes(tree, nodelist, with_backup=False):
                     # There is a previous node, append text to its tail
                     prev.tail = (prev.tail or "") + " " + subtree.tail
             # remove the node
-            subtree.getparent().remove(subtree)
+            if "preserve-content" not in subtree.attrib:
+                subtree.getparent().remove(subtree)
 
     if with_backup:
         new_len = len(tree.text_content())
@@ -195,6 +234,8 @@ def delete_by_link_density(subtree, tagname, backtracking=False, favor_precision
     threshold = 200 if favor_precision else 100
 
     for elem in subtree.iter(tagname):
+        if 'preserve-content' in elem.attrib:
+            continue
         elemtext = trim(elem.text_content())
         result, templist = link_density_test(elem, elemtext, favor_precision)
         if result:
@@ -339,6 +380,21 @@ CONVERSIONS = {
     # wbr
 }
 
+def reorder_header_elements(tree):
+    for ref in tree.xpath("//ref[head]"):
+        head = ref.find("head")
+        if head is not None:
+            # Create new <ref> element to move inside <head>
+            new_ref = Element(ref.tag, ref.attrib)
+            new_ref.text = head.text
+
+            # Create new <head> element and insert <ref> inside it
+            new_head = Element(head.tag, head.attrib)
+            new_head.append(new_ref)
+
+            # Replace the old <ref> element with the new <head> element
+            parent = ref.getparent()
+            parent.replace(ref, new_head)
 
 def convert_tags(tree, options, url=None):
     "Simplify markup and convert relevant HTML tags to an XML standard."
@@ -381,6 +437,7 @@ def convert_tags(tree, options, url=None):
     if options.images:
         for elem in tree.iter('img'):
             elem.tag = 'graphic'
+    reorder_header_elements(tree)
     return tree
 
 

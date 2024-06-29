@@ -13,6 +13,16 @@ from functools import lru_cache
 from itertools import islice
 from unicodedata import normalize
 
+TARGET_ENCODINGS = [
+    'utf-8',
+    'windows-1251',  # Cyrillic
+    'koi8-r',        # Cyrillic
+    'iso-8859-5',    # Cyrillic
+    'cp866',         # Cyrillic
+    'windows-1256',  # Arabic
+    'iso-8859-6'     # Arabic
+]
+
 # response compression
 try:
     import brotli
@@ -122,29 +132,43 @@ def isutf8(data):
         return False
     return True
 
+def is_utf8(data, chunk_size=1024, sample_rate=0.1):
+    """Check if data is utf-8 encoded by decoding in chunks."""
+    total_chunks = len(data) // chunk_size
+    if total_chunks == 0:
+        total_chunks = 1
+    sample_chunks = max(int(total_chunks * sample_rate), 1)
+    for i in range(sample_chunks):
+        start = (len(data) // sample_chunks) * i
+        end = start + chunk_size
+        try:
+            data[start:end].decode('utf-8')
+        except UnicodeDecodeError:
+            return False
+    return True
 
 def detect_encoding(bytesobject):
-    """"Read all input or first chunk and return a list of encodings"""
-    # alternatives: https://github.com/scrapy/w3lib/blob/master/w3lib/encoding.py
-    # unicode-test
-    if isutf8(bytesobject):
-        return ['utf-8']
+    """Read all input or first chunk and return a list of encodings"""
     guesses = []
-    # additional module
-    if cchardet_detect is not None:
-        cchardet_guess = cchardet_detect(bytesobject)['encoding']
-        if cchardet_guess is not None:
-            guesses.append(cchardet_guess.lower())
-    # try charset_normalizer on first part, fallback on full document
+
+    # Check if it's UTF-8
+    if is_utf8(bytesobject):
+        return ['utf-8']
+
+    # Use charset_normalizer for further guesses
     if len(bytesobject) < 10000:
         detection_results = from_bytes(bytesobject)
     else:
         detection_results = from_bytes(bytesobject[:5000] + bytesobject[-5000:]) or \
                             from_bytes(bytesobject)
-    # return alternatives
     if len(detection_results) > 0:
         guesses.extend([r.encoding for r in detection_results])
-    # it cannot be utf-8 (tested above)
+
+    # If guesses include UTF-8, prioritize it
+    if 'utf-8' in guesses:
+        return ['utf-8']
+
+    # Filter out unwanted aliases and return the guesses
     return [g for g in guesses if g not in UNICODE_ALIASES]
 
 

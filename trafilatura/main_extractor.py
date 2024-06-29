@@ -19,6 +19,7 @@ from .utils import FORMATTING_PROTECTED, is_image_file, text_chars_test
 from .xpaths import (BODY_XPATH, COMMENTS_DISCARD_XPATH, COMMENTS_XPATH,
                      DISCARD_IMAGE_ELEMENTS, OVERALL_DISCARD_XPATH,
                      PAYWALL_DISCARD_XPATH, PRECISION_DISCARD_XPATH,
+                     EXTRA_DISCARD_XPATH, HIDDEN_XPATH,
                      TEASER_DISCARD_XPATH)
 
 
@@ -487,7 +488,7 @@ def recover_wild_text(tree, result_body, options, potential_tags=TAG_CATALOG):
     '''Look for all previously unconsidered wild elements, including outside of the determined
        frame and throughout the document to recover potentially missing text parts'''
     LOGGER.debug('Recovering wild text elements')
-    search_expr = './/blockquote|.//code|.//p|.//pre|.//q|.//quote|.//table|.//div[contains(@class, \'w3-code\')]'
+    search_expr = './/blockquote|.//code|.//p|.//pre|.//q|.//quote|.//table|.//div[contains(@class, \'w3-code\')]|.//head[contains(@rend,\'h1\')]|.//head[contains(@rend,\'h2\')]'
     if options.focus == "recall":
         potential_tags.update(['div', 'lb'])
         search_expr += '|.//div|.//lb|.//list'
@@ -508,7 +509,9 @@ def prune_unwanted_sections(tree, potential_tags, options):
     'Rule-based deletion of targeted document sections'
     favor_precision = options.focus == "precision"
     # prune the rest
-    tree = prune_unwanted_nodes(tree, OVERALL_DISCARD_XPATH, with_backup=True)
+    tree = prune_unwanted_nodes(tree, HIDDEN_XPATH, with_backup=True)
+    tree = prune_unwanted_nodes(tree, OVERALL_DISCARD_XPATH)
+    tree = prune_unwanted_nodes(tree, EXTRA_DISCARD_XPATH)
     tree = prune_unwanted_nodes(tree, PAYWALL_DISCARD_XPATH)
     # decide if images are preserved
     if 'graphic' not in potential_tags:
@@ -580,6 +583,7 @@ def _extract(tree, options):
             subelems = [subtree]
         # extract content
         result_body.extend([el for el in (handle_textelem(e, potential_tags, options) for e in subelems) if el is not None])
+
         # remove trailing titles
         while len(result_body) > 0 and (result_body[-1].tag in NOT_AT_THE_END):
             result_body[-1].getparent().remove(result_body[-1])
@@ -590,6 +594,34 @@ def _extract(tree, options):
     temp_text = ' '.join(result_body.itertext()).strip()
     return result_body, temp_text, potential_tags
 
+def remove_head_preceding_content(tree):
+    head_found = False
+    for head in tree.xpath("//head[@rend='h1']"):
+        if head_found:
+            break
+        
+        parent = head.getparent()
+        preceding = []
+        for sibling in parent.iterchildren():
+            if sibling is head:
+                head_found = True
+                break
+            preceding.append(sibling)
+        for element in preceding:
+            parent.remove(element)
+
+def remove_unwanted_links(tree):
+    # Remove <ref> tags with href ending in #top
+    REF_DISCARD_XPATH = [
+        "//ref[substring(@target, string-length(@target) - 3) = '#top']",
+        "//ref[contains(@target, '?') and contains(substring-after(@target, '?'), 'search=')]",
+        "//ref[starts-with(@target, '/')]"
+    ]
+    for expr in REF_DISCARD_XPATH:
+        for ref in tree.xpath(expr):
+            parent = ref.getparent()
+            if parent is not None:
+                parent.remove(ref)
 
 def extract_content(cleaned_tree, options):
     '''Find the main content of a page using a set of XPath expressions,
@@ -610,6 +642,8 @@ def extract_content(cleaned_tree, options):
     # filter output
     strip_elements(result_body, 'done')
     strip_tags(result_body, 'div')
+    remove_head_preceding_content(result_body)
+    remove_unwanted_links(result_body)
     # return
     return result_body, temp_text, len(temp_text)
 

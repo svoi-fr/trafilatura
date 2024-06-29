@@ -6,6 +6,7 @@ Listing a series of settings that are applied module-wide.
 from configparser import ConfigParser
 from datetime import datetime
 from html import unescape
+import re
 
 try:
     from os import sched_getaffinity
@@ -39,6 +40,19 @@ def use_config(filename=None, config=None):
 
 DEFAULT_CONFIG = use_config()
 
+countries = [
+    "France", "Germany", "Poland", "Spain", "Netherlands", "Belgium", "Italy",
+    "France", "Deutschland", "Polska", "España", "Nederland", "Belgique", "Italia"
+]
+
+CONTACT_PATTERNS = [
+    r'\b(\d{5}|\d{4}\s+[A-Z]{2})\b\s+\w+',
+    rf'([A-Z][a-z]+(?:-[A-Z][a-z]+)*|(?:[A-Z][a-z]+(?:\s[A-Z][a-z]+)*))(?:\s*[-,\s]+\s*)({"|".join(countries)})',
+    r'(\+\d{11}|\b0\d{9}\b|\b0\d{2}\s+\d{4}\s+\d{4}\b|\b0\d\s\d{2}\s\d{2}\s\d{2}\b)',
+    r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
+    r'((7|8|9|1[0-9]|2[0-2]):[0-5][05]\s*-\s*(7|8|9|1[0-9]|2[0-2]):[0-5][05])'
+]
+
 CONFIG_MAPPING = {
     'min_extracted_size': 'MIN_EXTRACTED_SIZE',
     'min_output_size': 'MIN_OUTPUT_SIZE',
@@ -56,7 +70,7 @@ class Extractor:
     __slots__ = [
     'config',
     # general
-    'format', 'fast', 'focus', 'comments',
+    'format', 'fast', 'focus', 'preserve', 'comments',
     'formatting', 'links', 'images', 'tables', 'dedup', 'lang',
     # extraction size
     'min_extracted_size', 'min_output_size',
@@ -72,7 +86,7 @@ class Extractor:
     ]
     # consider dataclasses for Python 3.7+
     def __init__(self, *, config=DEFAULT_CONFIG, output_format="txt",
-                 fast=False, precision=False, recall=False,
+                 fast=False, precision=False, recall=False, preserve=None, contacts=False,
                  comments=True, formatting=False, links=False, images=False,
                  tables=True, dedup=False, lang=None, max_tree_size=None,
                  url=None, source=None, with_metadata=False, only_with_metadata=False, tei_validation=False,
@@ -81,6 +95,10 @@ class Extractor:
         self.format = output_format
         self.fast = fast
         self.focus = "recall" if recall else "precision" if precision else "balanced"
+        self.preserve = [re.compile(pattern) for pattern in (preserve or [])]
+        if contacts:
+            for pattern in CONTACT_PATTERNS:
+                self.preserve.append(re.compile(pattern))
         self.comments = comments
         self.formatting = formatting or output_format == "markdown"
         self.links = links

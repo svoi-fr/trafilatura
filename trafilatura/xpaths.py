@@ -101,6 +101,14 @@ PAYWALL_DISCARD_XPATH = [XPath(
     ]'''
 )]
 
+HIDDEN_XPATH = [XPath(
+    '''.//*[
+    contains(@class, "hide-") or contains(@class, "-hide-") or contains(@class, "hide-print")
+    or contains(@id, "hidden") or contains(@style, "hidden") or contains(@class, " hidden") or contains(@class, " hide")
+    or contains(@hidden, "hidden")
+    or @aria-hidden="true" or contains(@class, "notloaded")
+    ]'''
+)]
 
 OVERALL_DISCARD_XPATH = [XPath(x) for x in (
     # navigation + footers, news outlets related posts, sharing, jp-post-flair jp-relatedposts
@@ -155,15 +163,32 @@ OVERALL_DISCARD_XPATH = [XPath(x) for x in (
     or @data-lp-replacement-content]''',
 
     # comment debris + hidden parts
-    '''.//*[@class="comments-title" or contains(@class, "comments-title") or
-    contains(@class, "nocomments") or starts-with(@id, "reply-") or starts-with(@class, "reply-") or
+    '''.//*[contains(@class, "comments-title") or contains(@class, "nocomments") or
+    contains(@id, "reply-") or contains(@class, "reply-") or
     contains(@class, "-reply-") or contains(@class, "message") or contains(@id, "reader-comments")
-    or contains(@id, "akismet") or contains(@class, "akismet") or contains(@class, "suggest-links") or
-    starts-with(@class, "hide-") or contains(@class, "-hide-") or contains(@class, "hide-print") or
-    contains(@id, "hidden") or contains(@style, "hidden") or contains(@class, " hidden") or contains(@class, " hide")
+    or contains(@id, "akismet") or contains(@class, "akismet") or contains(@class, "suggest-links")
     or contains(@class, "noprint") or contains(@style, "display:none") or contains(@style, "display: none")
-    or @aria-hidden="true" or contains(@class, "notloaded")]''',
+    or contains(@class, "error") or contains(@class, "alert")
+    or contains(name(@*), "navigation")
+    or contains(@id, "logo") or contains(@class, "logo")
+    or starts-with(@id, "archive-") or starts-with(@class, "archive-")]'''
 )]
+
+EXTRA_DISCARD_XPATH = [XPath(x) for x in (
+  '''.//*[
+    contains(@class, "error")
+    or contains(@class, "alert")
+    or contains(@class, "feedback")
+    or contains(@class, "Feedback")
+    or contains(@class, "Contributors")
+    or contains(@class, "LinkedThemes")
+    or contains(@class, "form")
+    or contains(@class, "no-print")
+    or contains(@class, "navigation")
+    or contains(@class, "form")
+    or contains(@data-test, "voir-aussi")
+    ]''',
+)];
 # conflicts:
 # contains(@id, "header") or contains(@class, "header") or
 # class contains "cats" (categories, also tags?)

@@ -55,9 +55,9 @@ META_ATTRIBUTES = [
 HI_FORMATTING = {'#b': '**', '#i': '*', '#u': '__', '#t': '`'}
 
 
-def build_json_output(docmeta, with_metadata=True):
+def build_json_output(docmeta, options):
     '''Build JSON output based on extracted information'''
-    if with_metadata:
+    if options.with_metadata:
         outputdict = {slot: getattr(docmeta, slot, None) for slot in docmeta.__slots__}
         outputdict.update({
             'source': outputdict.pop('url'),
@@ -65,15 +65,15 @@ def build_json_output(docmeta, with_metadata=True):
             'excerpt': outputdict.pop('description'),
             'categories': ';'.join(outputdict.pop('categories')),
             'tags': ';'.join(outputdict.pop('tags')),
-            'text': xmltotxt(outputdict.pop('body'), include_formatting=False),
+            'text': xmltotxt(outputdict.pop('body'), include_formatting=options.formatting),
         })
         commentsbody = outputdict.pop('commentsbody')
     else:
-        outputdict = {'text': xmltotxt(docmeta.body, include_formatting=False)}
+        outputdict = {'text': xmltotxt(docmeta.body, include_formatting=options.formatting)}
         commentsbody = docmeta.commentsbody
 
     if commentsbody is not None:
-        outputdict['comments'] = xmltotxt(commentsbody, include_formatting=False)
+        outputdict['comments'] = xmltotxt(commentsbody, include_formatting=options.formatting)
 
     return json_dumps(outputdict, ensure_ascii=False)
 

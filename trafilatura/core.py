@@ -3,12 +3,14 @@
 Extraction configuration and processing functions.
 """
 
+import re
 import logging
 import sys
 
 from copy import copy, deepcopy
+from xml.etree.ElementTree import tostring, fromstring
 
-from lxml.etree import XPath, strip_tags
+from lxml.etree import XPath, strip_tags, Element
 
 # own
 from .baseline import baseline
@@ -21,6 +23,7 @@ from .settings import DEFAULT_CONFIG, Extractor, use_config
 from .utils import LANGID_FLAG, check_html_lang, language_filter, load_html, normalize_unicode
 from .xml import build_json_output, control_xml_output, xmltotxt, xmltocsv
 from .xpaths import REMOVE_COMMENTS_XPATH
+from .metadata import extract_title
 
 
 LOGGER = logging.getLogger(__name__)
@@ -44,7 +47,7 @@ def determine_returnstring(document, options):
         returnstring = xmltocsv(document, options.formatting)
     # JSON
     elif options.format == 'json':
-        returnstring = build_json_output(document, options.with_metadata)
+        returnstring = build_json_output(document, options)
     # HTML
     elif options.format == 'html':
         returnstring = build_html_output(document, options.with_metadata)
@@ -68,8 +71,81 @@ def determine_returnstring(document, options):
     return normalize_unicode(returnstring)
 
 
+def extract_addresses(script_content):
+    address_pattern_1 = re.compile(
+        r"""
+        \{\s*                       # Opening curly brace and optional whitespace
+        ['"]title['"]:\s*['"]       # 'title' field with optional whitespace
+        (?P<title>[^'"]+)           # Title value
+        ['"],\s*['"]address['"]:\s* # 'address' field with optional whitespace
+        ['"](?P<address>[^'"]+)     # Address value
+        ['"],[^}]*                  # Match the rest of the object until the closing curly brace
+        \}
+        """, re.VERBOSE
+    )
+    
+    address_pattern_2 = re.compile(
+        r"""
+        var\s+title\s*=\s*['"](?P<title>[^'"]+)['"];\s*           # 'title' variable assignment
+        var\s+adresse\s*=\s*['"](?P<address>[^'"]+)['"];\s*       # 'adresse' variable assignment
+        .*?var\s+infosbulle\s*=\s*['"](?P<info>.*?)['"];\s*       # 'infosbulle' variable assignment
+        """, re.VERBOSE | re.DOTALL
+    )
+    
+    addresses = []
+    
+    matches_1 = address_pattern_1.finditer(script_content)
+    for match in matches_1:
+        addresses.append((match.group('title').replace('\\"', '"'), match.group('address').replace('\\"', '"'), None))
+        
+    matches_2 = address_pattern_2.finditer(script_content)
+    for match in matches_2:
+        addresses.append((match.group('title').replace('\\"', '"'), match.group('address').replace('\\"', '"'), match.group('info').replace('\\"', '"')))
+   
+    return addresses
+
+def process_script_elements(tree):
+    element = Element("div")
+    for script in tree.xpath("//script"):
+        script_content = script.text
+        if script_content:
+            addresses = extract_addresses(script_content)
+            if addresses:
+                title = Element("h2")
+                title.text = "Addresses"
+                element.append(title)
+                for title, address, info in addresses:
+                    new_h3 = Element("h3")
+                    new_h3.text = title
+                    new_p = Element("p")
+                    new_p.text = address
+                    element.append(new_h3)
+                    element.append(new_p)
+                    if info:
+                        try:
+                            # Try to parse info as HTML
+                            element.append(load_html(info))
+                        except:
+                            # Treat info as plain text if parsing fails
+                            new_p = Element("p")
+                            new_p.text = info
+                            element.append(new_p)
+    return element
+
+
+def check_header(tree, orig):
+    """Check if the tree contains a header element."""
+    if not tree.xpath("//head[@rend='h1']"):
+        title = extract_title(orig)
+        if title:
+            header = Element("head", rend="h1")
+            header.text = title
+            tree.insert(0, header)
+
+
+
 def bare_extraction(filecontent, url=None, no_fallback=False,  # fast=False,
-                    favor_precision=False, favor_recall=False,
+                    favor_precision=False, favor_recall=False, preserve_patterns=None, include_contacts=False,
                     include_comments=True, output_format="python", target_language=None,
                     include_tables=True, include_images=False, include_formatting=False,
                     include_links=False, deduplicate=False,
@@ -136,8 +212,8 @@ def bare_extraction(filecontent, url=None, no_fallback=False,  # fast=False,
         if not options or not isinstance(options, Extractor):
             options = Extractor(
                           config=config, output_format=output_format,
-                          fast=no_fallback, precision=favor_precision, recall=favor_recall,
-                          comments=include_comments, formatting=include_formatting, links=include_links,
+                          fast=no_fallback, precision=favor_precision, recall=favor_recall, preserve=preserve_patterns,
+                          contacts=include_contacts, comments=include_comments, formatting=include_formatting, links=include_links,
                           images=include_images, tables=include_tables,
                           dedup=deduplicate, lang=target_language, max_tree_size=max_tree_size,
                           url=url, with_metadata=with_metadata, only_with_metadata=only_with_metadata,
@@ -176,6 +252,8 @@ def bare_extraction(filecontent, url=None, no_fallback=False,  # fast=False,
                 prune_xpath = [prune_xpath]
             tree = prune_unwanted_nodes(tree, [XPath(x) for x in prune_xpath])
 
+        script_extract = process_script_elements(tree)
+        script_extract = convert_tags(script_extract, options, options.url or document.url)
         # backup for further processing
         tree_backup = copy(tree)
 
@@ -196,6 +274,8 @@ def bare_extraction(filecontent, url=None, no_fallback=False,  # fast=False,
 
         # extract content
         postbody, temp_text, len_text = extract_content(cleaned_tree, options)
+        postbody.append(script_extract)
+        check_header(postbody, tree_backup)
 
         # compare if necessary
         if not options.fast:
@@ -240,6 +320,7 @@ def bare_extraction(filecontent, url=None, no_fallback=False,  # fast=False,
         LOGGER.warning('discarding data: %s', options.source)
         return None
 
+    postbody.append(script_extract)
     # special case: python variables
     if options.format == 'python':
         document.text = xmltotxt(postbody, options.formatting)
@@ -253,10 +334,9 @@ def bare_extraction(filecontent, url=None, no_fallback=False,  # fast=False,
 
     return document if not as_dict else document.as_dict()
 
-
 def extract(filecontent, url=None, record_id=None, no_fallback=False,
-            favor_precision=False, favor_recall=False,
-            include_comments=True, output_format="txt",
+            favor_precision=False, favor_recall=False, preserve_patterns=None,
+            include_contacts=False, include_comments=True, output_format="txt",
             tei_validation=False, target_language=None,
             include_tables=True, include_images=False, include_formatting=False,
             include_links=False, deduplicate=False,
@@ -320,7 +400,7 @@ def extract(filecontent, url=None, record_id=None, no_fallback=False,
     if not options or not isinstance(options, Extractor):
         options = Extractor(
                       config=use_config(settingsfile, config), output_format=output_format,
-                      fast=no_fallback, precision=favor_precision, recall=favor_recall,
+                      fast=no_fallback, precision=favor_precision, preserve=preserve_patterns, contacts=include_contacts, recall=favor_recall,
                       comments=include_comments, formatting=include_formatting, links=include_links,
                       images=include_images, tables=include_tables,
                       dedup=deduplicate, lang=target_language, max_tree_size=max_tree_size,
