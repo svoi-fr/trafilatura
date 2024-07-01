@@ -263,6 +263,8 @@ def bare_extraction(filecontent, url=None, no_fallback=False,  # fast=False,
 
         # convert tags, the rest does not work without conversion
         cleaned_tree = convert_tags(cleaned_tree, options, options.url or document.url)
+        for ref in cleaned_tree.xpath("//ref"):
+            ref.text = "".join(ref.text.split())
 
         # comments first, then remove
         if options.comments:

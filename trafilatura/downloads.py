@@ -5,6 +5,7 @@ All functions needed to steer and execute downloads of web documents.
 
 import logging
 import random
+import chardet
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
